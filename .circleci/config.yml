@@ -1,6 +1,45 @@
+version: 2.0
+
+jobs:
+  build:
+    docker:
+      - image: circleci/ruby:2.4-node # primary container - where job steps are run
+      - image: circleci/postgres:9.4.12-alpine # services container
+    working_directory: ~/circleci-demo-workflows
+    steps:
+      - checkout
+      # Bundle install dependencies
+      - run: bundle install --path vendor/bundle
+
+      # Database setup
+      - run: bundle exec rake db:create db:schema:load
+
+      - run:
+          name: Run tests
+          command: rake
+
+  deploy:
+    machine:
+        enabled: true
+    working_directory: ~/circleci-demo-workflows
+    environment:
+      HEROKU_APP: "sleepy-refuge-55486" # define env var $HEROKU_APP
+    steps:
+      - checkout
+      - run:
+          name: Setup Heroku
+          command: bash .circleci/setup-heroku.sh # run a script to set up Heroku
+
+      - run:
+          command: |
+            git push heroku sequential-branch-filter:master
+            heroku run rake db:migrate
+            sleep 5 # sleep for 5 seconds to wait for dynos
+            heroku restart
+
 workflows:
   version: 2
-  build-deploy:
+  build-and-deploy:
     jobs:
       - build
       - deploy:
@@ -8,48 +47,5 @@ workflows:
             - build
           filters:
             branches:
-              only: master
+              only: sequential-branch-filter
 
-version: 2
-jobs:
-  build:
-    docker:
-      - image: circleci/python:3.6.2-stretch-browsers
-        environment:
-          FLASK_CONFIG: testing
-          TEST_DATABASE_URL: postgresql://ubuntu@localhost/circle_test?sslmode=disable
-      - image: circleci/postgres:9.6.5-alpine-ram
-        environment:
-          POSTGRES_USER: ubuntu
-          POSTGRES_DB: circle_test
-          POSTGRES_PASSWORD: ""
-    steps:
-      - checkout
-      - restore_cache:
-          key: deps1-{{ .Branch }}-{{ checksum "requirements/dev.txt" }}
-      - run:
-          name: Install Python deps in a venv
-          command: |
-            python3 -m venv venv
-            . venv/bin/activate
-            pip install -r requirements/dev.txt
-      - save_cache:
-          key: deps1-{{ .Branch }}-{{ checksum "requirements/dev.txt" }}
-          paths:
-            - "venv"
-      - run:
-          command: |
-            . venv/bin/activate
-            python manage.py test
-      - store_artifacts:
-          path: test-reports/
-          destination: tr1
-      - store_test_results:
-          path: test-reports/
-  deploy:
-    steps:
-      - checkout
-      - run:
-          name: Deploy Master to Heroku
-          command: |
-            git push https://heroku:633c0fb3-d14e-43f3-a0b8-94db164e063f@git.heroku.com/testingrotem.git master
